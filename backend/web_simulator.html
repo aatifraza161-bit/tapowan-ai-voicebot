@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tapowan AI Receptionist - Live Simulator</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+            backdrop-filter: blur(10px);
+            text-align: center;
+            width: 90%;
+            max-width: 600px;
+        }
+        h1 { margin-bottom: 10px; }
+        .status { margin-bottom: 30px; font-weight: bold; color: #a8ff78; }
+        .chat-box {
+            background: rgba(0, 0, 0, 0.2);
+            height: 250px;
+            border-radius: 10px;
+            padding: 15px;
+            overflow-y: auto;
+            text-align: left;
+            margin-bottom: 20px;
+            font-size: 1.1em;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .msg { padding: 10px; border-radius: 10px; max-width: 80%; }
+        .msg.user { background: #4a69bd; align-self: flex-end; }
+        .msg.ai { background: #079992; align-self: flex-start; }
+        button {
+            background: #e55039;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 1.2em;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(229, 80, 57, 0.4);
+        }
+        button:hover {
+            transform: scale(1.05);
+            background: #eb2f06;
+        }
+        button.listening {
+            background: #fbc531;
+            box-shadow: 0 4px 15px rgba(251, 197, 49, 0.4);
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Tapowan Receptionist Simulator</h1>
+    <div class="status" id="status">Status: Ready to receive call</div>
+    
+    <div class="chat-box" id="chatBox">
+        <div class="msg ai">Namaste, Tapowan Public School mein aapka swagat hai. How may I help you?</div>
+    </div>
+
+    <button id="callBtn" onclick="startCall()">📞 Start Call Simulation</button>
+</div>
+
+<script>
+    let faqs = "Loading school information...";
+    let systemPrompt = "";
+
+    async function loadKnowledgeBase() {
+        try {
+            const res = await fetch('http://127.0.0.1:4000/api/vidya-knowledge');
+            if (res.ok) {
+                faqs = await res.text();
+            }
+        } catch(e) {
+            console.log("Could not load from backend, using default/offline data.");
+        }
+        
+        systemPrompt = `You are a strict AI receptionist for Tapowan Public School.
+CRITICAL RULES:
+1. Speak in Hindi by default. ONLY speak in English IF the user speaks English.
+2. STRICT KNOWLEDGE: You can ONLY use the "School Info" provided below.
+3. NO HALLUCINATION: If the user asks about ANY detail (timing, bus, fee, person) NOT explicitly written in the School Info, you MUST reply with: "Mujhe iski jankari nahi hai. Kripya school office se sampark karein." (or English equivalent). DO NOT GUESS.
+4. Keep responses under 2 sentences.
+5. If the user asks to speak to a human, reply EXACTLY with: "TRANSFER_TO_HUMAN".
+
+School Info:
+${faqs}`;
+    }
+    
+    // Load when page starts
+    loadKnowledgeBase();
+
+    const chatBox = document.getElementById('chatBox');
+    const statusDiv = document.getElementById('status');
+    const callBtn = document.getElementById('callBtn');
+    
+    let recognition;
+    let isListening = false;
+
+    // Check if browser supports speech recognition
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = 'en-IN'; // Indian English / Hindi mix support
+        
+        recognition.onstart = function() {
+            statusDiv.innerText = "Status: Listening...";
+            callBtn.classList.add('listening');
+            callBtn.innerText = "Listening... (Speak Now)";
+        };
+
+        recognition.onresult = async function(event) {
+            const transcript = event.results[0][0].transcript;
+            addMessage(transcript, 'user');
+            statusDiv.innerText = "Status: Thinking...";
+            callBtn.classList.remove('listening');
+            callBtn.innerText = "Processing...";
+            
+            await generateResponse(transcript);
+        };
+
+        recognition.onerror = function(event) {
+            statusDiv.innerText = "Status: Error - " + event.error;
+            resetButton();
+        };
+
+        recognition.onend = function() {
+            if (isListening) resetButton();
+        };
+    } else {
+        statusDiv.innerText = "Status: Speech Recognition not supported in this browser. Please use Chrome.";
+        callBtn.style.display = "none";
+    }
+
+    function startCall() {
+        if (!recognition) return;
+        isListening = true;
+        recognition.start();
+    }
+
+    function resetButton() {
+        isListening = false;
+        callBtn.classList.remove('listening');
+        callBtn.innerText = "📞 Start Call Simulation";
+        statusDiv.innerText = "Status: Ready";
+    }
+
+    function addMessage(text, sender) {
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `msg ${sender}`;
+        msgDiv.innerText = text;
+        chatBox.appendChild(msgDiv);
+        chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    async function generateResponse(userText) {
+        try {
+            // Attempting to use local Ollama
+            const response = await fetch('http://127.0.0.1:11434/api/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: 'llama3:latest',
+                    prompt: `System: ${systemPrompt}\nUser: ${userText}\nReceptionist:`,
+                    stream: false
+                })
+            });
+
+            if (!response.ok) throw new Error("Ollama not reachable");
+            const data = await response.json();
+            const aiText = data.response.trim();
+            
+            if (aiText.includes("TRANSFER_TO_HUMAN")) {
+                addMessage("[SYSTEM: CALL TRANSFERRED TO EXTENSION 100 (OFFICE)]", 'ai');
+                speak("I am transferring your call to the school office. Please hold.");
+            } else {
+                addMessage(aiText, 'ai');
+                speak(aiText);
+            }
+        } catch (error) {
+            console.error(error);
+            const fallback = "I'm sorry, I am currently offline. Please contact the school office.";
+            addMessage(fallback, 'ai');
+            speak(fallback);
+        }
+        resetButton();
+    }
+
+    function speak(text) {
+        if ('speechSynthesis' in window) {
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'hi-IN'; // Use Indian accent
+            window.speechSynthesis.speak(utterance);
+        }
+    }
+</script>
+
+</body>
+</html>

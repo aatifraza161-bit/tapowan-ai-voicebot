@@ -1,0 +1,74 @@
+#!/bin/bash
+# ai_receptionist.agi - Asterisk AGI script to interface with Node.js AI Backend
+# Place this in /var/lib/asterisk/agi-bin/ and chmod +x
+
+# Read AGI environment variables
+declare -A AGI_ENV
+while read -r line; do
+    if [ -z "$line" ]; then
+        break
+    fi
+    key=$(echo "$line" | cut -d: -f1)
+    val=$(echo "$line" | cut -d: -f2- | sed -e 's/^[[:space:]]*//')
+    AGI_ENV[$key]="$val"
+done
+
+CALLERID="${AGI_ENV[agi_callerid]}"
+TEMP_DIR="/tmp/asterisk_ai"
+mkdir -p "$TEMP_DIR"
+
+WAV_IN="$TEMP_DIR/${CALLERID}_in_$$.wav"
+WAV_OUT="$TEMP_DIR/${CALLERID}_out_$$.wav"
+
+# Answer the channel
+echo "ANSWER"
+read response
+
+# Play greeting on first loop
+echo "STREAM FILE custom/ai_greeting \"\""
+read response
+
+# Main conversation loop
+while true; do
+    # Record caller audio (max 10 seconds, stop on silence 3 seconds)
+    echo "RECORD FILE $WAV_IN wav \"\" 10000 0 B s=3"
+    read response
+    
+    # Send to Node.js backend using curl
+    # The Node backend responds with the binary WAV file of the AI's response, or HTTP 404/500
+    HTTP_CODE=$(curl -s -w "%{http_code}" -o "$WAV_OUT" -F "audio=@${WAV_IN}.wav" -F "callerId=$CALLERID" http://127.0.0.1:4000/api/voice-process)
+
+    # Check if the backend decided to transfer
+    # If the file size of WAV_OUT is small, it might be a JSON response instead of a wav.
+    if grep -q "TRANSFER_TO_HUMAN" "$WAV_OUT" 2>/dev/null; then
+        echo "VERBOSE \"Transferring to human...\" 3"
+        read response
+        # Route back to Asterisk dialplan for transfer (e.g., exten 100)
+        echo "SET EXTENSION 100"
+        read response
+        echo "SET PRIORITY 1"
+        read response
+        break
+    fi
+
+    if [ "$HTTP_CODE" == "200" ]; then
+        # Play the AI response
+        # Asterisk STREAM FILE does not need the .wav extension
+        PLAY_FILE="${WAV_OUT%.*}"
+        echo "STREAM FILE $PLAY_FILE \"\""
+        read response
+    else
+        echo "VERBOSE \"AI Backend error or empty response\" 3"
+        read response
+        # Play a standard error prompt or just ask again
+        echo "STREAM FILE custom/ai_error \"\""
+        read response
+    fi
+
+    # Cleanup temp files for this loop
+    rm -f "${WAV_IN}.wav" "$WAV_OUT"
+done
+
+# Cleanup
+rm -f "${WAV_IN}.wav" "$WAV_OUT"
+exit 0

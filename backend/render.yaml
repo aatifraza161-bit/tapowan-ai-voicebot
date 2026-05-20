@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: tapowan-ai-voicebot
+    env: docker
+    plan: starter
+    region: singapore
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
