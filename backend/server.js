@@ -44,8 +44,9 @@ const upload = multer({ dest: 'uploads/' });
 // STT: Whisper (Local CPU via whisper.cpp)
 async function transcribeAudio(audioPath) {
     return new Promise((resolve, reject) => {
-        // whisper.cpp compiled binary + multilingual small model for Hindi
-        const whisperCmd = `/opt/whisper.cpp/main -m /opt/whisper.cpp/models/ggml-small.bin -f ${audioPath} -nt -l auto`;
+        // whisper.cpp compiled binary + multilingual base model for Hindi
+        const whisperCmd = `/opt/whisper.cpp/main -m /opt/whisper.cpp/models/ggml-base.bin -f ${audioPath} -nt -l auto`;
+
         exec(whisperCmd, (error, stdout, stderr) => {
             if (error) {
                 console.error(`Whisper Error: ${error.message}`);

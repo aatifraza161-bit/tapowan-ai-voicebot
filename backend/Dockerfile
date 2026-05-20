@@ -17,8 +17,9 @@ WORKDIR /opt/whisper.cpp
 # Checkout a stable tag to ensure the binary name is 'main'
 RUN git checkout v1.5.4 
 RUN make
-# Download whisper model (ggml-small)
-RUN bash ./models/download-ggml-model.sh small
+# Download whisper model (ggml-base)
+RUN bash ./models/download-ggml-model.sh base
+
 
 # Setup Piper
 WORKDIR /opt
