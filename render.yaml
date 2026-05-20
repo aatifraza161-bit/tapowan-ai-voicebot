@@ -6,9 +6,6 @@ services:
     region: singapore
     rootDir: backend
     envVars:
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
       - key: OPENROUTER_API_KEY
         sync: false
+
