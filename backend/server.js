@@ -204,9 +204,10 @@ wss.on('connection', (ws) => {
                     
                     // Convert raw to wav for whisper
                     const tempWavPath = path.join(__dirname, 'uploads', `${callId}.wav`);
-                    // Using ffmpeg to add wav header (assuming ffmpeg is available)
-                    exec(`ffmpeg -y -f s16le -ar 8000 -ac 1 -i ${tempRawPath} ${tempWavPath}`, async (err) => {
+                    // Using ffmpeg to add wav header (resampling to 16kHz for Whisper)
+                    exec(`ffmpeg -y -f s16le -ar 8000 -ac 1 -i ${tempRawPath} -ar 16000 ${tempWavPath}`, async (err) => {
                         if(!err) {
+
                             const transcript = await transcribeAudio(tempWavPath);
                             console.log(`[${callId}] User: ${transcript}`);
                             
