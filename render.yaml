@@ -4,6 +4,7 @@ services:
     env: docker
     plan: starter
     region: singapore
+    rootDir: backend
     envVars:
       - key: SUPABASE_URL
         sync: false
