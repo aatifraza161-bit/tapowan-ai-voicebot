@@ -2,7 +2,7 @@ services:
   - type: web
     name: tapowan-ai-voicebot
     env: docker
-    plan: starter
+    plan: free
     region: singapore
     rootDir: backend
     envVars:
