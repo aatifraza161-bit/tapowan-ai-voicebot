@@ -41,6 +41,20 @@ app.post('/api/simulate', async (req, res) => {
 // Setup Multer for receiving audio files from Asterisk
 const upload = multer({ dest: 'uploads/' });
 
+// Helper to filter out Whisper noise tokens/silence and empty inputs
+function isValidTranscript(text) {
+    if (!text) return false;
+    const clean = text.trim().toLowerCase();
+    if (clean.length < 2) return false;
+    const noiseTokens = ["[blank_audio]", "blank_audio", "[laughter]", "[music]", "[silence]", "(silence)", "[cough]", "[gasp]", "[sigh]", "[snorting]", "[giggle]"];
+    for (const token of noiseTokens) {
+        if (clean.includes(token)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // STT: Whisper (Local CPU via whisper.cpp)
 async function transcribeAudio(audioPath) {
     return new Promise((resolve, reject) => {
@@ -73,6 +87,13 @@ CRITICAL RULES:
 School Info:
 ${faqContext}`;
 
+    // Check if OpenRouter key is configured
+    const openRouterApiKey = process.env.OPENROUTER_API_KEY;
+    if (!openRouterApiKey || openRouterApiKey === 'your_openrouter_api_key_here') {
+        console.error("❌ ERROR: OPENROUTER_API_KEY is not configured in the environment variables!");
+        return "Sorry, I am facing a technical issue. Please contact the office.";
+    }
+
     try {
         const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
             model: 'deepseek/deepseek-chat',
@@ -82,8 +103,10 @@ ${faqContext}`;
             ]
         }, {
             headers: {
-                'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-                'Content-Type': 'application/json'
+                'Authorization': `Bearer ${openRouterApiKey}`,
+                'Content-Type': 'application/json',
+                'HTTP-Referer': 'https://github.com/aatifraza161-bit/tapowan-ai-voicebot',
+                'X-Title': 'Tapowan AI Voicebot'
             }
         });
         return response.data.choices[0].message.content.trim();
@@ -122,7 +145,9 @@ app.post('/api/voice-process', upload.single('audio'), async (req, res) => {
     try {
         const transcript = await transcribeAudio(audioFile.path);
         console.log(`[Caller ${callerId}] Transcript: ${transcript}`);
-        if (!transcript || transcript.length < 2) return res.json({ action: 'playback', text: 'I did not hear anything. Please try again.', file: '' });
+        if (!isValidTranscript(transcript)) {
+            return res.json({ action: 'playback', text: 'Mujhe sunayi nahi diya. Kripya fir se boliye.', file: '' });
+        }
 
         const aiResponseText = await generateResponse(transcript);
         console.log(`[AI Response]: ${aiResponseText}`);
@@ -198,8 +223,7 @@ wss.on('connection', (ws) => {
                     audioBuffer = []; // Clear buffer
                     silencePackets = 0;
 
-                    // Write PCM to a temp file. Note: whisper.cpp expects WAV, so we'd normally add a WAV header.
-                    // For a robust system, use ffmpeg or write a raw PCM -> WAV header function.
+                    // Write PCM to a temp file
                     const tempRawPath = path.join(__dirname, 'uploads', `${callId}.raw`);
                     fs.writeFileSync(tempRawPath, pcmBuffer);
                     
@@ -208,36 +232,46 @@ wss.on('connection', (ws) => {
                     // Using ffmpeg to add wav header (resampling to 16kHz for Whisper)
                     exec(`ffmpeg -y -f s16le -ar 8000 -ac 1 -i ${tempRawPath} -ar 16000 ${tempWavPath}`, async (err) => {
                         if(!err) {
-
                             const transcript = await transcribeAudio(tempWavPath);
                             console.log(`[${callId}] User: ${transcript}`);
                             
-                            if (transcript.length > 2) {
-                                const aiResponseText = await generateResponse(transcript);
-                                console.log(`[${callId}] AI: ${aiResponseText}`);
-                                logCall(callId, `User: ${transcript}\nAI: ${aiResponseText}`, false);
+                            let aiResponseText = "";
+                            if (isValidTranscript(transcript)) {
+                                aiResponseText = await generateResponse(transcript);
+                            } else {
+                                aiResponseText = "Mujhe sunayi nahi diya. Kripya fir se boliye.";
+                            }
+                            
+                            console.log(`[${callId}] AI: ${aiResponseText}`);
+                            logCall(callId, `User: ${transcript || "[silence]"}\nAI: ${aiResponseText}`, false);
 
-                                const responseWavPath = path.join(__dirname, 'uploads', `${callId}_resp.wav`);
-                                const ttsSuccess = await textToSpeech(aiResponseText, responseWavPath);
-                                
-                                if (ttsSuccess) {
-                                    // Send back to Exotel
-                                    const outBuffer = fs.readFileSync(responseWavPath);
-                                    // Strip 44 byte WAV header to send raw PCM
-                                    const pcmOut = outBuffer.slice(44);
-                                    ws.send(JSON.stringify({
-                                        event: "media",
-                                        media: { payload: pcmOut.toString('base64') }
-                                    }));
-                                }
+                            const responseWavPath = path.join(__dirname, 'uploads', `${callId}_resp.wav`);
+                            const ttsSuccess = await textToSpeech(aiResponseText, responseWavPath);
+                            
+                            if (ttsSuccess) {
+                                // Send back to Exotel
+                                const outBuffer = fs.readFileSync(responseWavPath);
+                                // Strip 44 byte WAV header to send raw PCM
+                                const pcmOut = outBuffer.slice(44);
+                                ws.send(JSON.stringify({
+                                    event: "media",
+                                    media: { payload: pcmOut.toString('base64') }
+                                }));
+                                // Clean up response wav file
+                                fs.unlink(responseWavPath, () => {});
                             }
                         }
+                        
+                        // Clean up temporary audio files
+                        fs.unlink(tempRawPath, () => {});
+                        fs.unlink(tempWavPath, () => {});
                         isProcessing = false;
                     });
                 }
             }
         } catch (e) {
             console.error("WS Message Error:", e.message);
+            isProcessing = false;
         }
     });
 
